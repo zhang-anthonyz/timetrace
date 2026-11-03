@@ -33,6 +33,7 @@ from .widgets import (
     CurrentCard,
     RecentList,
     SegmentedControl,
+    ShareCard,
     StatusChip,
     TotalCard,
 )
@@ -71,7 +72,7 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle("实时应用用时")
         self.setWindowIcon(icons.app_icon())
-        self.resize(1240, 860)
+        self.resize(1240, 900)
         self.setMinimumSize(1040, 720)
         self._build_ui()
         self._restore_geometry()
@@ -133,7 +134,15 @@ class MainWindow(QMainWindow):
         apps_layout.addLayout(apps_header)
         self._ranking = AppRanking()
         apps_layout.addWidget(self._ranking, 1)
-        content.addWidget(apps_card, 5)
+        apps_card.setMinimumHeight(160)
+
+        left = QVBoxLayout()
+        left.setContentsMargins(0, 0, 0, 0)
+        left.setSpacing(16)
+        left.addWidget(apps_card, 1)
+        self._share = ShareCard()
+        left.addWidget(self._share, 0)
+        content.addLayout(left, 5)
 
         right = QVBoxLayout()
         right.setContentsMargins(0, 0, 0, 0)
@@ -351,6 +360,7 @@ class MainWindow(QMainWindow):
             subtitle,
         )
         self._ranking.set_apps(snapshot.apps)
+        self._share.set_apps(snapshot.apps, range_label="今日", days=1)
         self._apps_count.setText(
             f"{snapshot.recorded_apps} 个应用" if snapshot.recorded_apps else "等待记录"
         )
@@ -381,6 +391,7 @@ class MainWindow(QMainWindow):
                 [],
                 f"读取数据失败：{exc}",
             )
+            self._share.set_apps([], range_label=f"近 {days} 天", days=days)
             return
 
         total = sum(app.seconds for app in apps)
@@ -391,6 +402,7 @@ class MainWindow(QMainWindow):
         )
         self._total_card.update_data(f"近 {days} 天活跃", total, apps, subtitle)
         self._ranking.set_apps(apps)
+        self._share.set_apps(apps, range_label=f"近 {days} 天", days=days)
         self._apps_count.setText(f"{len(apps)} 个应用" if apps else "暂无记录")
 
         dates = [start + timedelta(days=index) for index in range(days)]
@@ -430,6 +442,7 @@ class MainWindow(QMainWindow):
     def _show_empty(self, message: str) -> None:
         self._total_card.update_data("今日活跃", 0, [], message)
         self._ranking.set_apps([])
+        self._share.set_apps([], range_label="今日", days=1)
         self._apps_count.setText("等待记录")
         self._chart.set_data([0] * 24, [str(hour) for hour in range(24)], -1, 4)
         self._recent.set_sessions([], is_today=True)

@@ -5,9 +5,10 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 from datetime import datetime
+from html import escape
 from pathlib import Path
 
-from PySide6.QtCore import QPointF, QRectF, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QPoint, QPointF, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QColor,
     QFont,
@@ -33,7 +34,10 @@ from PySide6.QtWidgets import (
 
 from ..format import format_clock, format_duration, format_duration_tight, format_percent
 from ..models import AppUsage, RecentSession, Snapshot
+from ..share import ShareSlice, build_share_slices
 from . import icons, theme
+
+OTHER_COLOR = "#3F4B60"
 
 
 class Card(QFrame):
@@ -428,6 +432,397 @@ class BarChart(QWidget):
         self._hover = -1
         self.update()
         super().leaveEvent(event)
+
+
+def share_color(item: ShareSlice) -> str:
+    return OTHER_COLOR if item.is_other else icons.app_color(item.key)
+
+
+class SharePie(QWidget):
+    """Donut chart of per-app time share.
+
+    Hovering a wedge lifts it out of the ring, swaps the centre label to that
+    wedge's percentage and shows a tooltip with the full duration breakdown.
+    """
+
+    hovered = Signal(int)
+
+    RING_SIZE = 156
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._slices: list[ShareSlice] = []
+        self._total = 0
+        self._days = 1
+        self._range_label = "今日"
+        self._hover = -1
+        self._tooltip_at: QPoint | None = None
+        self.setMouseTracking(True)
+        self.setFixedSize(self.RING_SIZE, self.RING_SIZE)
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+
+    # ----------------------------------------------------------- data + state
+
+    def set_slices(
+        self,
+        slices: Sequence[ShareSlice],
+        total: int,
+        days: int = 1,
+        range_label: str = "今日",
+    ) -> None:
+        hovered_key = (
+            self._slices[self._hover].key if 0 <= self._hover < len(self._slices) else None
+        )
+        self._slices = list(slices)
+        self._total = max(0, int(total))
+        self._days = max(1, int(days))
+        self._range_label = range_label
+        self._hover = next(
+            (index for index, item in enumerate(self._slices) if item.key == hovered_key),
+            -1,
+        )
+        self.update()
+
+    def set_hover(self, index: int) -> None:
+        index = index if 0 <= index < len(self._slices) else -1
+        if index != self._hover:
+            self._hover = index
+            self.update()
+
+    # ---------------------------------------------------------------- painting
+
+    def _geometry(self) -> tuple[QPointF, float, float, QRectF]:
+        side = float(min(self.width(), self.height()))
+        center = QPointF(self.width() / 2.0, self.height() / 2.0)
+        radius = max(24.0, side / 2.0 - 8.0)
+        thickness = max(14.0, min(34.0, radius * 0.33))
+        ring = QRectF(
+            center.x() - radius + thickness / 2.0,
+            center.y() - radius + thickness / 2.0,
+            2.0 * (radius - thickness / 2.0),
+            2.0 * (radius - thickness / 2.0),
+        )
+        return center, radius, thickness, ring
+
+    def paintEvent(self, event) -> None:  # type: ignore[no-untyped-def]
+        del event
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        _center, _radius, thickness, ring = self._geometry()
+
+        track = QPen(QColor(theme.BORDER_SOFT), thickness)
+        track.setCapStyle(Qt.PenCapStyle.FlatCap)
+        painter.setPen(track)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawEllipse(ring)
+
+        if self._total <= 0 or not self._slices:
+            self._draw_center(painter, "—", "暂无记录")
+            return
+
+        start = 90 * 16
+        for index, item in enumerate(self._slices):
+            span = -int(round(360 * 16 * item.seconds / self._total))
+            if span == 0:
+                continue
+            hovered = index == self._hover
+            color = QColor(share_color(item))
+            arc_rect = QRectF(ring)
+            if hovered:
+                mid = math.radians((start + span / 2) / 16.0)
+                arc_rect.translate(math.cos(mid) * 4.0, -math.sin(mid) * 4.0)
+            elif self._hover != -1:
+                color.setAlpha(140)
+            pen = QPen(color, thickness + (2.0 if hovered else 0.0))
+            pen.setCapStyle(Qt.PenCapStyle.FlatCap)
+            painter.setPen(pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            inset = 0 if abs(span) < 16 * 8 else int(16 * 0.8)
+            painter.drawArc(arc_rect, start + inset // 2, span + inset)
+            start += span
+
+        if 0 <= self._hover < len(self._slices):
+            percent = self._slices[self._hover].seconds / self._total * 100.0
+            self._draw_center(painter, format_percent(percent), "占比")
+        else:
+            self._draw_center(painter, format_duration_tight(self._total), "合计")
+
+    def _draw_center(self, painter: QPainter, value: str, caption: str) -> None:
+        _center, _radius, thickness, ring = self._geometry()
+        room = max(28.0, ring.width() - thickness - 10.0)
+        size = 15
+        font = theme.number_font(size, 700)
+        while size > 11 and QFontMetrics(font).horizontalAdvance(value) > room:
+            size -= 1
+            font = theme.number_font(size, 700)
+        painter.setPen(QColor(theme.TEXT))
+        painter.setFont(font)
+        painter.drawText(
+            QRectF(0, self.height() / 2 - 19, self.width(), 23),
+            Qt.AlignmentFlag.AlignCenter,
+            value,
+        )
+        painter.setPen(QColor(theme.FAINT))
+        painter.setFont(theme.ui_font(8))
+        painter.drawText(
+            QRectF(0, self.height() / 2 + 3, self.width(), 16),
+            Qt.AlignmentFlag.AlignCenter,
+            caption,
+        )
+
+    # ------------------------------------------------------------------ hover
+
+    def _index_at(self, point: QPointF) -> int:
+        center, radius, thickness, _ring = self._geometry()
+        dx = point.x() - center.x()
+        dy = point.y() - center.y()
+        distance = math.hypot(dx, dy)
+        if distance < radius - thickness - 8 or distance > radius + 10:
+            return -1
+        if self._total <= 0:
+            return -1
+        clockwise = (90.0 - math.degrees(math.atan2(-dy, dx))) % 360.0
+        walked = 0.0
+        for index, item in enumerate(self._slices):
+            share = 360.0 * item.seconds / self._total
+            if clockwise < walked + share:
+                return index
+            walked += share
+        return -1
+
+    def tooltip_html(self, index: int) -> str:
+        item = self._slices[index]
+        percent = item.seconds / self._total * 100.0 if self._total else 0.0
+        rows = [
+            f"<span style='color:{theme.TEXT};font-weight:600'>{escape(item.name)}</span>",
+            f"<span style='color:{theme.MUTED}'>{self._range_label} "
+            f"{format_duration(item.seconds)}</span>"
+            f" · <span style='color:{share_color(item)}'>{format_percent(percent)}</span>",
+        ]
+        if item.is_other:
+            rows.append(
+                f"<span style='color:{theme.FAINT}'>{item.apps} 个应用合并计算</span>"
+            )
+        if self._days > 1 and item.seconds > 0:
+            rows.append(
+                f"<span style='color:{theme.FAINT}'>平均每天 "
+                f"{format_duration(item.seconds / self._days)}</span>"
+            )
+        return (
+            "<div style='white-space:nowrap'>" + "<br/>".join(rows) + "</div>"
+        )
+
+    def _show_tooltip(self, index: int, point: QPoint) -> None:
+        self._tooltip_at = point
+        QToolTip.showText(point + QPoint(14, 18), self.tooltip_html(index), self)
+
+    def mouseMoveEvent(self, event) -> None:  # type: ignore[no-untyped-def]
+        index = self._index_at(event.position())
+        point = event.globalPosition().toPoint()
+        if index != self._hover:
+            self._hover = index
+            self.update()
+            self.hovered.emit(index)
+            if index < 0:
+                QToolTip.hideText()
+            else:
+                self._show_tooltip(index, point)
+        elif index >= 0 and self._tooltip_at is not None:
+            if (point - self._tooltip_at).manhattanLength() > 10:
+                self._show_tooltip(index, point)
+
+    def leaveEvent(self, event) -> None:  # type: ignore[no-untyped-def]
+        self._tooltip_at = None
+        if self._hover != -1:
+            self._hover = -1
+            self.update()
+            self.hovered.emit(-1)
+        QToolTip.hideText()
+        super().leaveEvent(event)
+
+
+class ShareLegend(QWidget):
+    """Ranked legend beside the share pie; hovering a row lifts its wedge."""
+
+    hovered = Signal(int)
+
+    ROW = 27
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._slices: list[ShareSlice] = []
+        self._total = 0
+        self._hover = -1
+        self.setMouseTracking(True)
+        self.setMinimumHeight(self.ROW * 5)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+
+    def set_slices(self, slices: Sequence[ShareSlice], total: int) -> None:
+        hovered_key = (
+            self._slices[self._hover].key if 0 <= self._hover < len(self._slices) else None
+        )
+        self._slices = list(slices)
+        self._total = max(0, int(total))
+        self._hover = next(
+            (index for index, item in enumerate(self._slices) if item.key == hovered_key),
+            -1,
+        )
+        self.update()
+
+    def set_hover(self, index: int) -> None:
+        index = index if 0 <= index < len(self._slices) else -1
+        if index != self._hover:
+            self._hover = index
+            self.update()
+
+    def _offset(self) -> float:
+        rows = max(1, len(self._slices))
+        return max(0.0, (self.height() - rows * self.ROW) / 2.0)
+
+    def _index_at(self, point: QPointF) -> int:
+        if not self._slices:
+            return -1
+        index = int((point.y() - self._offset()) // self.ROW)
+        if 0 <= index < len(self._slices) and 0 <= point.y() <= self.height():
+            return index
+        return -1
+
+    def paintEvent(self, event) -> None:  # type: ignore[no-untyped-def]
+        del event
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+        if not self._slices:
+            painter.setPen(QColor(theme.FAINT))
+            painter.setFont(theme.ui_font(9))
+            painter.drawText(
+                QRectF(0, 0, self.width(), self.height()),
+                Qt.AlignmentFlag.AlignCenter,
+                "还没有应用记录",
+            )
+            return
+
+        width = float(self.width())
+        offset = self._offset()
+        name_left = 20.0
+        percent_width = 46.0
+        duration_width = 62.0
+        percent_left = width - percent_width - 2.0
+        duration_left = percent_left - duration_width
+        name_width = max(20.0, duration_left - name_left - 8.0)
+
+        name_font = theme.ui_font(10, 600)
+        number_font = theme.number_font(9, 600)
+        tiny_font = theme.ui_font(8)
+        name_metrics = QFontMetrics(name_font)
+
+        for index, item in enumerate(self._slices):
+            top = offset + index * self.ROW
+            row = QRectF(0, top + 1, width, self.ROW - 2)
+            hovered = index == self._hover
+            dimmed = self._hover != -1 and not hovered
+            if hovered:
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QColor(theme.CARD_HOVER))
+                painter.drawRoundedRect(row, 8, 8)
+
+            color = QColor(share_color(item))
+            if dimmed:
+                color.setAlpha(110)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(color)
+            painter.drawEllipse(QPointF(9.0, top + self.ROW / 2.0), 4.0, 4.0)
+
+            painter.setFont(name_font)
+            painter.setPen(QColor(theme.TEXT if hovered else theme.MUTED))
+            painter.drawText(
+                QRectF(name_left, top, name_width, self.ROW),
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                name_metrics.elidedText(
+                    item.name, Qt.TextElideMode.ElideRight, int(name_width)
+                ),
+            )
+
+            percent = item.seconds / self._total * 100.0 if self._total else 0.0
+            painter.setFont(number_font)
+            painter.setPen(QColor(theme.TEXT if hovered else theme.MUTED))
+            painter.drawText(
+                QRectF(duration_left, top, duration_width - 6.0, self.ROW),
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                format_duration_tight(item.seconds),
+            )
+            painter.setFont(tiny_font)
+            painter.setPen(QColor(theme.FAINT))
+            painter.drawText(
+                QRectF(percent_left, top, percent_width, self.ROW),
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                format_percent(percent),
+            )
+
+    def mouseMoveEvent(self, event) -> None:  # type: ignore[no-untyped-def]
+        index = self._index_at(event.position())
+        if index != self._hover:
+            self._hover = index
+            self.update()
+            self.hovered.emit(index)
+
+    def leaveEvent(self, event) -> None:  # type: ignore[no-untyped-def]
+        if self._hover != -1:
+            self._hover = -1
+            self.update()
+            self.hovered.emit(-1)
+        super().leaveEvent(event)
+
+
+class ShareCard(Card):
+    """Dashboard module: share of foreground time per app for the active range."""
+
+    MAX_SLICES = 5
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setMinimumHeight(210)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 13, 16, 12)
+        layout.setSpacing(6)
+
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        header.setSpacing(8)
+        title = QLabel("应用占比")
+        title.setObjectName("sectionTitle")
+        self._hint = QLabel("今日 · 悬浮查看详情")
+        self._hint.setObjectName("cardHint")
+        header.addWidget(title)
+        header.addWidget(self._hint)
+        header.addStretch(1)
+        layout.addLayout(header)
+
+        body = QHBoxLayout()
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(18)
+        self._pie = SharePie(self)
+        self._legend = ShareLegend(self)
+        body.addWidget(self._pie, 0, Qt.AlignmentFlag.AlignTop)
+        body.addWidget(self._legend, 1)
+        layout.addLayout(body, 1)
+
+        self._pie.hovered.connect(self._legend.set_hover)
+        self._legend.hovered.connect(self._pie.set_hover)
+
+    def set_apps(
+        self,
+        apps: Sequence[AppUsage],
+        *,
+        range_label: str = "今日",
+        days: int = 1,
+    ) -> None:
+        slices = build_share_slices(apps, self.MAX_SLICES)
+        total = sum(int(app.seconds) for app in apps if app.seconds > 0)
+        self._hint.setText(f"{range_label} · 悬浮查看详情")
+        self._pie.set_slices(slices, total, days, range_label)
+        self._legend.set_slices(slices, total)
 
 
 class AppRow(QWidget):
