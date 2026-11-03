@@ -26,3 +26,4 @@ exact*.png
 rebrand*.png
 .pytest_cache/
 *.new
+!docs/*.png
