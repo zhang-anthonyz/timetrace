@@ -6,8 +6,8 @@
 
 两种方式选一个：
 
-- **绿色版 zip**：从 GitHub Releases 下载 `TimeTrace-Windows-x64.zip`。
-- **自己打包**：克隆仓库后执行 `build.ps1`，产物在 `dist\TimeTrace-Windows-x64.zip`（见 [README](README.md#打包)）。
+- **绿色版 zip**：从 GitHub Releases 下载 `TimeTrace-<版本>-Windows-x64.zip`（如 `TimeTrace-1.0.0-Windows-x64.zip`）。
+- **自己打包**：克隆仓库后执行 `build.ps1`，产物在 `dist\TimeTrace-<版本>-Windows-x64.zip`（见 [README](README.md#打包)）。
 
 解压到一个固定位置，比如 `D:\Tools\TimeTrace`。别放在临时目录或下载文件夹里，移动后要重新建快捷方式。
 

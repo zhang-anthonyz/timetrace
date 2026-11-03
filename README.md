@@ -116,11 +116,11 @@ $env:PYTHONPATH = "src"
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
 ```
 
-脚本会建/复用 `.venv`、装依赖、生成图标、用 PyInstaller `--onedir --windowed` 打包、复制 README/LICENSE/docs 并压 zip。产物：
+脚本会建/复用 `.venv`、装依赖、生成图标、用 PyInstaller `--onedir --windowed` 打包、复制 README/QUICKSTART/LICENSE/docs 并压 zip。产物：
 
 ```text
 dist\TimeTrace\TimeTrace.exe
-dist\TimeTrace-Windows-x64.zip
+dist\TimeTrace-<版本>-Windows-x64.zip
 ```
 
 解压后整个 `TimeTrace` 文件夹就是绿色版，约 120 MB；zip 约 50 MB。发布时把 zip 挂到 GitHub Releases，仓库里不放二进制。

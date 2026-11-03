@@ -33,15 +33,20 @@ if ($LASTEXITCODE -ne 0) {
 
 $Dist = Join-Path $Root "dist\TimeTrace"
 Copy-Item (Join-Path $Root "README.md") -Destination $Dist -Force
+Copy-Item (Join-Path $Root "QUICKSTART.md") -Destination $Dist -Force
 Copy-Item (Join-Path $Root "LICENSE") -Destination $Dist -Force
 $Docs = Join-Path $Dist "docs"
 if (Test-Path $Docs) { Remove-Item $Docs -Recurse -Force }
 Copy-Item (Join-Path $Root "docs") -Destination $Dist -Recurse -Force
 
-$Zip = Join-Path $Root "dist\TimeTrace-Windows-x64.zip"
+$Version = (& $Python -c "import sys; sys.path.insert(0, 'src'); import timeflow; print(timeflow.__version__)").Trim()
+Write-Host "Package version: $Version"
+
+$Zip = Join-Path $Root "dist\TimeTrace-$Version-Windows-x64.zip"
+Get-ChildItem (Join-Path $Root "dist") -Filter "TimeTrace*Windows-x64.zip" | Remove-Item -Force
 if (Test-Path $Zip) { Remove-Item $Zip -Force }
 Write-Host "Creating portable archive..."
-Compress-Archive -Path (Join-Path $Dist "\*") -DestinationPath $Zip -CompressionLevel Optimal
+Compress-Archive -Path $Dist -DestinationPath $Zip -CompressionLevel Optimal
 
 Write-Host ""
 Write-Host "Built: $Root\dist\TimeTrace\TimeTrace.exe"
