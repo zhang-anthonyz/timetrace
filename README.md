@@ -77,7 +77,7 @@
 - **时迹**：时间走过之后留下的痕迹。
 - **TimeTrace**：Time + Trace，记录时间去了哪里。
 - 不叫"计时器"，因为它做的不是提醒你时间在流逝，而是把已经流逝的时间摊开给你看。
-- 早期代号是 **TimeFlow**，代码目录 `timeflow/` 沿用它，产品名已改为 TimeTrace。
+- 早期代号是 **TimeFlow**。产品名、仓库名和本地目录都已统一为 TimeTrace，只有 Python 包名保留了旧代号 `timeflow`（`src/timeflow/`）。
 
 ## 从源码运行
 
